@@ -19,6 +19,7 @@
       <p class="text-slate-600">Pulls from public sources (e.g., Reddit gift subreddits). Top 10 for today & this week. Auto-refreshes at local midnight.</p>
       <p class="text-xs text-slate-500 mt-1">Tip: Update the Amazon affiliate tag in the code (<code>YOUR_TAG_20</code>) to earn commissions.</p>
     </header>
+
     <!-- Controls -->
     <section class="bg-white rounded-2xl shadow-soft p-4 md:p-6 mb-6">
       <div class="flex flex-col md:flex-row gap-4 md:items-end md:justify-between">
@@ -64,6 +65,11 @@
         </div>
       </div>
       <div class="text-xs text-slate-500 mt-3" id="meta"></div>
+      <div class="mt-3 text-xs text-amber-700" id="diag"></div>
+      <div class="mt-3 flex gap-2">
+        <button id="sample" class="px-3 py-2 rounded-lg border">Load sample data</button>
+        <button id="toggleProxy" class="px-3 py-2 rounded-lg border">Toggle proxy (on)</button>
+      </div>
     </section>
 
     <!-- Results -->
@@ -85,7 +91,7 @@
     const AMAZON_TAG = 'YOUR_TAG_20'; // <-- change this
 
     // Force proxy can help on GitHub Pages or file:// where CORS blocks direct calls
-    const USE_PROXY_ALWAYS = true;
+    let USE_PROXY_ALWAYS = true;
 
     const SUBREDDITS = {
       overall: ['GiftIdeas', 'BuyItForLife', 'WhichGift'],
@@ -153,8 +159,42 @@
     // Fetchers
     // ---------------------------
     async function fetchSubredditTop(sub, period){
-      // Build URLs (Reddit JSON + 2 proxy fallbacks)
-      const base = `https://www.reddit.com/r/${sub}/top.json?raw_json=1&t=${period}&limit=50`;
+      const base = `https://www.reddit.com/r/${sub}/top.json?raw_json=1&t=${period}&limit=50&_=${Date.now()}`;
+      const proxied1 = `https://cors.isomorphic-git.org/${base}`;
+      const proxied2 = `https://r.jina.ai/http://www.reddit.com/r/${sub}/top.json?raw_json=1&t=${period}&limit=50&_=${Date.now()}`;
+      const proxied3 = `https://r.jina.ai/http://api.reddit.com/r/${sub}/top.json?raw_json=1&t=${period}&limit=50&_=${Date.now()}`;
+
+      async function tryJson(u){
+        const res = await fetch(u, { credentials: 'omit' });
+        if(!res.ok) throw new Error(`HTTP ${res.status} @ ${u.split('/r/')[0]}`);
+        const json = await res.json();
+        const posts = (json?.data?.children || []).map(x => x.data);
+        if(!Array.isArray(posts) || posts.length === 0) throw new Error('Empty list');
+        return posts;
+      }
+
+      async function tryTextJson(u){
+        const res = await fetch(u, { credentials: 'omit' });
+        if(!res.ok) throw new Error(`HTTP ${res.status} @ ${u.split('/r/')[0]}`);
+        const txt = await res.text();
+        const json = JSON.parse(txt);
+        const posts = (json?.data?.children || []).map(x => x.data);
+        if(!Array.isArray(posts) || posts.length === 0) throw new Error('Empty list');
+        return posts;
+      }
+
+      const chain = USE_PROXY_ALWAYS ? [proxied1, proxied2, proxied3, base] : [base, proxied1, proxied2, proxied3];
+      let lastErr;
+      for(const u of chain){
+        try {
+          const usingText = u.startsWith('https://r.jina.ai/');
+          const result = usingText ? await tryTextJson(u) : await tryJson(u);
+          logDiag(`Loaded ${sub} via ${usingText ? 'jina.ai' : (u.includes('isomorphic-git')?'isomorphic proxy':'direct reddit')}`);
+          return result;
+        } catch(e){ lastErr = e; logDiag(`Fetch failed for ${sub}: ${e.message}`); }
+      }
+      throw lastErr || new Error('All sources failed');
+    }/top.json?raw_json=1&t=${period}&limit=50`;
       const proxied1 = `https://cors.isomorphic-git.org/${base}`;
       // r.jina.ai returns raw response with permissive CORS; parse as text then JSON
       const proxied2 = `https://r.jina.ai/http://www.reddit.com/r/${sub}/top.json?raw_json=1&t=${period}&limit=50`;
@@ -243,6 +283,7 @@
     // Render
     // ---------------------------
     function render(items){
+      logDiag(`Rendering ${items.length} item(s)`);
       const grid = document.getElementById('grid');
       grid.innerHTML = '';
       items.forEach((p, idx) => {
@@ -297,7 +338,10 @@
       refresh: document.getElementById('refresh'),
       meta: document.getElementById('meta'),
       title: document.getElementById('sectionTitle'),
-      error: document.getElementById('error')
+      error: document.getElementById('error'),
+      diag: document.getElementById('diag'),
+      sample: document.getElementById('sample'),
+      toggleProxy: document.getElementById('toggleProxy')
     };
 
     let cache = { day: {}, week: {} }; // cache[period][category] = posts
@@ -321,6 +365,11 @@
       }
 
       return list.slice(0, 10);
+    }
+
+    function logDiag(msg){
+      try{ els.diag.textContent = msg + (els.diag.textContent ? ('
+' + els.diag.textContent) : ''); }catch(_){ /* noop */ }
     }
 
     async function refreshData(force=false){
@@ -411,6 +460,28 @@
       el.addEventListener('keyup', () => { syncQuery(); refreshData(); });
     });
     els.refresh.addEventListener('click', () => refreshData(true));
+    els.sample.addEventListener('click', () => {
+      const demo = [
+        { title: 'Cozy Sherpa Throw Blanket', score: 421 },
+        { title: 'Insulated Stainless Steel Tumbler 40oz', score: 382 },
+        { title: 'LED String Lights (USB)', score: 271 },
+        { title: 'Wireless Earbuds Bluetooth 5.3', score: 215 },
+        { title: 'Scented Candle Gift Set', score: 188 },
+        { title: 'Mini Projector for Movies', score: 172 },
+        { title: 'Massage Gun Handheld', score: 166 },
+        { title: 'Lego Flowers Bouquet', score: 141 },
+        { title: 'Board Game – Ticket to Ride', score: 119 },
+        { title: 'Electric Milk Frother', score: 101 }
+      ];
+      render(demo);
+      els.error.textContent = '';
+      els.meta.textContent = 'Sample data loaded (offline mode)';
+    });
+    els.toggleProxy.addEventListener('click', () => {
+      USE_PROXY_ALWAYS = !USE_PROXY_ALWAYS;
+      els.toggleProxy.textContent = `Toggle proxy (${USE_PROXY_ALWAYS ? 'on' : 'off'})`;
+      refreshData(true);
+    });
 
     // Initial load
     refreshData(true);
