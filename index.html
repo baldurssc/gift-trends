@@ -85,6 +85,9 @@
     // ---------------------------
     const AMAZON_TAG = 'YOUR_TAG_20'; // <-- change this
 
+    // Force proxy can help on GitHub Pages or file:// where CORS blocks direct calls
+    const USE_PROXY_ALWAYS = true;
+
     const SUBREDDITS = {
       overall: ['GiftIdeas', 'BuyItForLife', 'WhichGift'],
       toys: ['toys', 'GiftIdeas', 'boardgames', 'lego'],
@@ -151,8 +154,41 @@
     // Fetchers
     // ---------------------------
     async function fetchSubredditTop(sub, period){
-      // Try direct Reddit JSON first; if CORS blocks, retry via a public CORS proxy.
+      // Build URLs (Reddit JSON + 2 proxy fallbacks)
       const base = `https://www.reddit.com/r/${sub}/top.json?raw_json=1&t=${period}&limit=50`;
+      const proxied1 = `https://cors.isomorphic-git.org/${base}`;
+      // r.jina.ai returns raw response with permissive CORS; parse as text then JSON
+      const proxied2 = `https://r.jina.ai/http://www.reddit.com/r/${sub}/top.json?raw_json=1&t=${period}&limit=50`;
+
+      async function tryJson(u){
+        const res = await fetch(u, { credentials: 'omit' });
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const posts = (json?.data?.children || []).map(x => x.data);
+        if(!Array.isArray(posts) || posts.length === 0) throw new Error('Empty list');
+        return posts;
+      }
+
+      async function tryTextJson(u){
+        const res = await fetch(u, { credentials: 'omit' });
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const txt = await res.text();
+        const json = JSON.parse(txt);
+        const posts = (json?.data?.children || []).map(x => x.data);
+        if(!Array.isArray(posts) || posts.length === 0) throw new Error('Empty list');
+        return posts;
+      }
+
+      const chain = USE_PROXY_ALWAYS ? [proxied1, proxied2, base] : [base, proxied1, proxied2];
+      let lastErr;
+      for(const u of chain){
+        try {
+          if(u === proxied2) return await tryTextJson(u);
+          return await tryJson(u);
+        } catch(e){ lastErr = e; }
+      }
+      throw lastErr || new Error('All sources failed');
+    }/top.json?raw_json=1&t=${period}&limit=50`;
       const proxied = `https://cors.isomorphic-git.org/${base}`;
 
       async function tryUrl(u){
@@ -214,10 +250,25 @@
         const card = document.createElement('article');
         card.className = 'bg-white rounded-2xl shadow-soft overflow-hidden flex flex-col';
         const img = pickImage(p);
-        const a = amazonSearchLink(p.title);
+        const a = amazonSearchLink(p.title || 'Gift idea');
         card.innerHTML = `
           <div class="relative aspect-[4/3] bg-slate-100">
-            <img src="${img}" alt="${p.title.replace(/\"/g,'&quot;')}" class="w-full h-full object-cover" loading="lazy" />
+            <img src="${img}" alt="${(p.title||'Gift idea').replace(/\"/g,'&quot;')}" class="w-full h-full object-cover" loading="lazy" />
+            <span class="absolute top-2 left-2 text-xs px-2 py-1 rounded-lg bg-black/70 text-white">#${idx+1}</span>
+          </div>
+          <div class="p-4 flex-1 flex flex-col gap-2">
+            <div class="text-xs text-slate-500">Reddit · score ${p.score ?? '—'}</div>
+            <h3 class="font-semibold leading-snug line-clamp-2">${(p.title||'Gift idea').replace(/</g,'&lt;')}</h3>
+            <div class="mt-auto">
+              <a href="${a}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 text-indigo-700 hover:underline">
+                <span>View on Amazon</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M6 2a1 1 0 0 0 0 2h3.586L2.293 11.293a1 1 0 1 0 1.414 1.414L11 5.414V9a1 1 0 1 0 2 0V3a1 1 0 0 0-1-1H6z"/></svg>
+              </a>
+            </div>
+          </div>`;
+        grid.appendChild(card);
+      });
+    }" alt="${p.title.replace(/\"/g,'&quot;')}" class="w-full h-full object-cover" loading="lazy" />
             <span class="absolute top-2 left-2 text-xs px-2 py-1 rounded-lg bg-black/70 text-white">#${idx+1}</span>
           </div>
           <div class="p-4 flex-1 flex flex-col gap-2">
@@ -283,6 +334,36 @@
           const posts = await load(period, category);
           cache[period][category] = posts;
         }
+        const filtered = applyFilters(cache[period][category]);
+        if(filtered.length === 0){
+          els.error.textContent = 'No posts matched your filters just now. Try widening the age/gender or switch category.';
+        }
+        render(filtered);
+        const meta = `Period: ${period === 'day' ? 'Today' : 'This Week'} · Category: ${category.replace('_',' ')} · Updated ${fmtDate(Date.now())}`;
+        els.meta.textContent = meta;
+        els.title.textContent = period === 'day' ? 'Top 10 Today' : 'Top 10 This Week';
+      } catch(e){
+        console.error(e);
+        els.error.textContent = 'Could not load sources right now. Your browser, ad-blocker, or CORS policy may be blocking Reddit. Retrying via proxy…';
+        // Force one more attempt via proxies
+        try {
+          cache[period][category] = await (async ()=>{
+            const subs = SUBREDDITS[category] || SUBREDDITS.overall;
+            const all = [];
+            for(const s of subs){
+              try { all.push(...await fetchSubredditTop(s, period)); } catch(_){}
+            }
+            return all;
+          })();
+          const filtered = applyFilters(cache[period][category]);
+          render(filtered.slice(0,10));
+          if(filtered.length === 0){ els.error.textContent = 'Still no results after retry. Try disabling ad blockers for this page or switching category.'; }
+        } catch(e2){
+          els.error.textContent = 'All attempts failed. As a fallback, here are a few evergreen ideas:';
+          render([ { title: 'Insulated Tumbler' }, { title: 'LED String Lights' }, { title: 'Cozy Throw Blanket' }, { title: 'Bluetooth Beanie' } ]);
+        }
+      }
+    }
         const filtered = applyFilters(cache[period][category]);
         render(filtered);
         const meta = `Period: ${period === 'day' ? 'Today' : 'This Week'} · Category: ${category.replace('_',' ')} · Updated ${fmtDate(Date.now())}`;
