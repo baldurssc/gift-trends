@@ -5,22 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Trending Gift Ideas — Daily & Weekly (No Backend)</title>
   <meta name="description" content="Top 10 gift ideas for today and this week. Filters for age, gender, and category. Auto-refreshes at midnight. No backend required." />
-  <!-- Tailwind (CDN) for quick styling; swap to your own build if desired -->
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-    .shadow-soft { box-shadow: 0 10px 30px rgba(0,0,0,.06); }
+    .line-clamp-2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .shadow-soft{box-shadow:0 10px 30px rgba(0,0,0,.06)}
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
   <main class="max-w-6xl mx-auto px-4 py-8">
     <header class="mb-6">
       <h1 class="text-3xl font-bold">Trending Gift Ideas</h1>
-      <p class="text-slate-600">Pulls from public sources (e.g., Reddit gift subreddits). Top 10 for today & this week. Auto-refreshes at local midnight.</p>
-      <p class="text-xs text-slate-500 mt-1">Tip: Update the Amazon affiliate tag in the code (<code>YOUR_TAG_20</code>) to earn commissions.</p>
+      <p class="text-slate-600">Top 10 for today & this week from public sources (Reddit RSS). Auto-refreshes nightly.</p>
+      <p class="text-xs text-slate-500 mt-1">Set your Amazon affiliate tag in the script: <code>AMAZON_TAG</code>.</p>
     </header>
 
-    <!-- Controls -->
     <section class="bg-white rounded-2xl shadow-soft p-4 md:p-6 mb-6">
       <div class="flex flex-col md:flex-row gap-4 md:items-end md:justify-between">
         <div class="grid grid-cols-2 md:grid-cols-5 gap-3 w-full">
@@ -68,11 +66,9 @@
       <div class="mt-3 text-xs text-amber-700 whitespace-pre-wrap" id="diag"></div>
       <div class="mt-3 flex gap-2">
         <button id="sample" type="button" class="px-3 py-2 rounded-lg border">Load sample data</button>
-        <button id="toggleProxy" type="button" class="px-3 py-2 rounded-lg border">Toggle proxy (on)</button>
       </div>
     </section>
 
-    <!-- Results -->
     <section class="space-y-6">
       <h2 class="text-xl font-semibold" id="sectionTitle">Top 10 Today</h2>
       <div id="grid" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5"></div>
@@ -80,179 +76,23 @@
     </section>
 
     <footer class="mt-12 text-sm text-slate-500">
-      <p>Sources: Reddit (e.g., r/GiftIdeas, r/BuyItForLife). Titles are linked to Amazon searches with your affiliate tag. Replace <code>YOUR_TAG_20</code> in the script.</p>
+      <p>Source: Reddit RSS (e.g., r/GiftIdeas, r/BuyItForLife). We link to Amazon searches with your affiliate tag.</p>
     </footer>
   </main>
 
   <script>
-  console.log('Gift Trends build: v2.0');
   document.addEventListener('DOMContentLoaded', () => {
-    // ---------------------------
-    // Config
-    // ---------------------------
-    const AMAZON_TAG = 'YOUR_TAG_20'; // <-- change this
-    let USE_PROXY_ALWAYS = true; // keep on for GitHub Pages
-
+    // -------- Config --------
+    const AMAZON_TAG = 'YOUR_TAG_20'; // <- set your tag
     const SUBREDDITS = {
-      overall: ['GiftIdeas', 'BuyItForLife', 'WhichGift'],
-      toys: ['toys', 'GiftIdeas', 'boardgames', 'lego'],
-      electronics: ['buildapcsales', 'headphones', 'GiftIdeas', 'BuyItForLife'],
-      home_decor: ['HomeDecorating', 'GiftIdeas', 'BuyItForLife'],
-      kitchen: ['Cooking', 'GiftIdeas', 'BuyItForLife']
+      overall:     ['GiftIdeas','BuyItForLife','WhichGift'],
+      toys:        ['toys','GiftIdeas','boardgames','lego'],
+      electronics: ['buildapcsales','headphones','GiftIdeas','BuyItForLife'],
+      home_decor:  ['HomeDecorating','GiftIdeas','BuyItForLife'],
+      kitchen:     ['Cooking','GiftIdeas','BuyItForLife']
     };
 
-    const GENDER_KEYWORDS = {
-      male: [/\\bfor\\s?him\\b/i, /\\bmen\\b/i, /\\bboy(s)?\\b/i],
-      female: [/\\bfor\\s?her\\b/i, /\\bwomen\\b/i, /\\bgirl(s)?\\b/i],
-      nonbinary: [/\\bunisex\\b/i, /\\bgender[-\\s]?neutral\\b/i]
-    };
-
-    // Safer age heuristics
-    const AGE_RULES = {
-      kids:  { band:[0,12],  re: /\\b(kid|kids|child|children|toddler|tweens?)\\b/i },
-      teens: { band:[13,17], re: /\\b(teen|teenager|high\\s*school|middle\\s*school)\\b/i },
-      adults:{ band:[18,99], re: /\\b(adult|for\\s*adults|grown[-\\s]?ups?)\\b/i },
-      // ages 8 or ages 8-12
-      range: { band:null,    re: /\\b(?:age|ages)\\s*(\\d{1,2})(?:\\s*-\\s*(\\d{1,2}))?\\b/i }
-    };
-
-    // ---------------------------
-    // Helpers
-    // ---------------------------
-    function amazonSearchLink(title){
-      const q = encodeURIComponent((title||'').replace(/\\[.*?\\]/g,'').replace(/\\(.*?\\)/g,''));
-      return `https://www.amazon.com/s?k=${q}&tag=${AMAZON_TAG}`;
-    }
-
-    function pickImage(post){
-      if(post.thumbnail && typeof post.thumbnail === 'string' && post.thumbnail.startsWith('http')) return post.thumbnail;
-      if(post.preview && post.preview.images && post.preview.images[0]){
-        const src = post.preview.images[0].source.url.replace(/&amp;/g,'&');
-        return src;
-      }
-      return 'https://picsum.photos/seed/gifts/400/300';
-    }
-
-    function matchesGender(title, wanted){
-      if(wanted==='all') return true;
-      const arr = GENDER_KEYWORDS[wanted] || [];
-      return arr.some(re => re.test(title||''));
-    }
-
-    function matchesAge(title, min, max){
-      const t = title || '';
-      const m = t.match(AGE_RULES.range.re);
-      if(m){
-        const a = parseInt(m[1],10);
-        const b = m[2] ? parseInt(m[2],10) : a;
-        const lo = Math.min(a,b), hi = Math.max(a,b);
-        return !(hi < min || lo > max);
-      }
-      if(AGE_RULES.kids.re.test(t))  return !(12 < min);
-      if(AGE_RULES.teens.re.test(t)) return !(17 < min || 13 > max);
-      if(AGE_RULES.adults.re.test(t))return !(max < 18);
-      return true; // no age signal
-    }
-
-    function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
-    function fmtDate(d){ return new Date(d).toLocaleString(); }
-    function nextLocalMidnight(){ const now = new Date(); const n = new Date(now); n.setHours(24,0,0,0); return n - now; }
-
-    function logDiag(msg){
-      const el = document.getElementById('diag');
-      if(!el) return;
-      el.textContent = (msg + (el.textContent ? ('\\n' + el.textContent) : ''));
-    }
-
-    // ---------------------------
-    // Fetchers
-    // ---------------------------
-    async function fetchSubredditTop(sub, period){
-      const base    = `https://www.reddit.com/r/${sub}/top.json?raw_json=1&t=${period}&limit=50&_=${Date.now()}`;
-      const proxy1  = `https://cors.isomorphic-git.org/${base}`;
-      const proxy2  = `https://r.jina.ai/http://www.reddit.com/r/${sub}/top.json?raw_json=1&t=${period}&limit=50&_=${Date.now()}`;
-
-      async function tryJson(u){
-        const res = await fetch(u, { credentials: 'omit' });
-        if(!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        const posts = (json?.data?.children || []).map(x => x.data);
-        if(!Array.isArray(posts) || posts.length === 0) throw new Error('Empty list');
-        return posts;
-      }
-      async function tryTextJson(u){
-        const res = await fetch(u, { credentials: 'omit' });
-        if(!res.ok) throw new Error(`HTTP ${res.status}`);
-        const txt = await res.text();
-        const json = JSON.parse(txt);
-        const posts = (json?.data?.children || []).map(x => x.data);
-        if(!Array.isArray(posts) || posts.length === 0) throw new Error('Empty list');
-        return posts;
-      }
-
-      const chain = USE_PROXY_ALWAYS ? [proxy1, proxy2, base] : [base, proxy1, proxy2];
-      for(const u of chain){
-        try {
-          const useText = u.startsWith('https://r.jina.ai/');
-          const out = useText ? await tryTextJson(u) : await tryJson(u);
-          logDiag(`Loaded r/${sub} via ${useText ? 'jina.ai' : (u.includes('isomorphic-git') ? 'isomorphic proxy' : 'direct')}`);
-          return out;
-        } catch(e){ logDiag(`Fetch failed for r/${sub}: ${e.message}`); }
-      }
-      throw new Error('All sources failed for r/' + sub);
-    }
-
-    async function load(period, category){
-      const subs = SUBREDDITS[category] || SUBREDDITS.overall;
-      const all = [];
-      for(const s of subs){
-        try { all.push(...await fetchSubredditTop(s, period)); }
-        catch(e){ logDiag(`Skipping r/${s}: ${e.message}`); }
-      }
-      const byTitle = new Map();
-      for(const p of all){
-        const title = (p.title||'').trim();
-        if(!title) continue;
-        const cur = byTitle.get(title);
-        if(!cur || (p.score||0) > (cur.score||0)) byTitle.set(title, p);
-      }
-      return Array.from(byTitle.values()).sort((a,b)=>(b.score||0)-(a.score||0));
-    }
-
-    // ---------------------------
-    // Render
-    // ---------------------------
-    function render(items){
-      logDiag(`Rendering ${items.length} item(s)`);
-      const grid = document.getElementById('grid');
-      grid.innerHTML = '';
-      items.forEach((p, idx) => {
-        const card = document.createElement('article');
-        card.className = 'bg-white rounded-2xl shadow-soft overflow-hidden flex flex-col';
-        const img = pickImage(p);
-        const a = amazonSearchLink(p.title || 'Gift idea');
-        card.innerHTML = `
-          <div class="relative aspect-[4/3] bg-slate-100">
-            <img src="${img}" alt="${(p.title||'Gift idea').replace(/\\"/g,'&quot;')}" class="w-full h-full object-cover" loading="lazy" />
-            <span class="absolute top-2 left-2 text-xs px-2 py-1 rounded-lg bg-black/70 text-white">#${idx+1}</span>
-          </div>
-          <div class="p-4 flex-1 flex flex-col gap-2">
-            <div class="text-xs text-slate-500">Reddit · score ${p.score ?? '—'}</div>
-            <h3 class="font-semibold leading-snug line-clamp-2">${(p.title||'Gift idea').replace(/</g,'&lt;')}</h3>
-            <div class="mt-auto">
-              <a href="${a}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 text-indigo-700 hover:underline">
-                <span>View on Amazon</span>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M6 2a1 1 0 0 0 0 2h3.586L2.293 11.293a1 1 0 1 0 1.414 1.414L11 5.414V9a1 1 0 1 0 2 0V3a1 1 0 0 0-1-1H6z"/></svg>
-              </a>
-            </div>
-          </div>`;
-        grid.appendChild(card);
-      });
-    }
-
-    // ---------------------------
-    // State + Filtering
-    // ---------------------------
+    // -------- Helpers --------
     const els = {
       period: document.getElementById('period'),
       category: document.getElementById('category'),
@@ -265,67 +105,204 @@
       title: document.getElementById('sectionTitle'),
       error: document.getElementById('error'),
       diag: document.getElementById('diag'),
+      grid: document.getElementById('grid'),
       sample: document.getElementById('sample'),
-      toggleProxy: document.getElementById('toggleProxy')
     };
 
-    let cache = { day: {}, week: {} }; // cache[period][category] = posts
+    function logDiag(msg){
+      els.diag.textContent = (msg + (els.diag.textContent ? '\n' + els.diag.textContent : ''));
+    }
 
+    function amazonSearchLink(title){
+      const q = encodeURIComponent((title||'').replace(/\[.*?\]/g,'').replace(/\(.*?\)/g,''));
+      return `https://www.amazon.com/s?k=${q}&tag=${AMAZON_TAG}`;
+    }
+
+    function matchesGender(title, wanted){
+      if(wanted==='all') return true;
+      const t = (title||'').toLowerCase();
+      if(wanted==='male')      return /\b(for\s?him|men|boy|boys)\b/i.test(title);
+      if(wanted==='female')    return /\b(for\s?her|women|girl|girls)\b/i.test(title);
+      if(wanted==='nonbinary') return /\b(unisex|gender[-\s]?neutral)\b/i.test(title);
+      return true;
+    }
+
+    // Safe age rules (regex kept simple)
+    const AGE_RULES = {
+      kids:/\b(kid|kids|child|children|toddler|tween)\b/i,
+      teens:/\b(teen|teenager|high\s*school|middle\s*school)\b/i,
+      adults:/\b(adult|for\s*adults|grown[-\s]?up)\b/i,
+      range:/\b(?:age|ages)\s*(\d{1,2})(?:\s*-\s*(\d{1,2}))?\b/i
+    };
+    function matchesAge(title, min, max){
+      const t = title||'';
+      const m = t.match(AGE_RULES.range);
+      if(m){
+        const a = parseInt(m[1],10);
+        const b = m[2] ? parseInt(m[2],10) : a;
+        const lo = Math.min(a,b), hi = Math.max(a,b);
+        return !(hi < min || lo > max);
+      }
+      if(AGE_RULES.kids.test(t))  return !(12 < min);
+      if(AGE_RULES.teens.test(t)) return !(17 < min || 13 > max);
+      if(AGE_RULES.adults.test(t))return !(max < 18);
+      return true;
+    }
+
+    function clamp(n,a,b){return Math.max(a,Math.min(b,n))}
+    function fmtDate(d){return new Date(d).toLocaleString()}
+    function nextLocalMidnight(){const now=new Date();const n=new Date(now);n.setHours(24,0,0,0);return n-now;}
+
+    // -------- RSS fetchers (CORS-friendly) --------
+    // Reddit RSS supports /top/.rss with ?t=day|week
+    function subredditRssUrl(sub, period){
+      return `https://www.reddit.com/r/${sub}/top/.rss?t=${period}`;
+    }
+
+    async function fetchRss(url){
+      const res = await fetch(url, { credentials: 'omit' });
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const xml = await res.text();
+      const doc = new DOMParser().parseFromString(xml, 'application/xml');
+      // Handle RSS parse errors
+      const err = doc.querySelector('parsererror');
+      if(err) throw new Error('RSS parse error');
+      return doc;
+    }
+
+    function parseRedditRss(doc){
+      // RSS entries are <entry> (Atom) or <item> (RSS)
+      const entries = [...doc.querySelectorAll('entry, item')];
+      return entries.map((el) => {
+        const title = (el.querySelector('title')?.textContent || '').trim();
+        // prefer <link href="..."> (Atom) then <link> text (RSS)
+        const href = el.querySelector('link[rel="alternate"]')?.getAttribute('href')
+                  || el.querySelector('link')?.getAttribute('href')
+                  || el.querySelector('link')?.textContent
+                  || '';
+        // score: Reddit RSS doesn’t give votes; we derive a simple recency rank
+        const updated = el.querySelector('updated, pubDate')?.textContent || '';
+        const ts = updated ? Date.parse(updated) : Date.now();
+        // Try media thumbnail if present
+        const media = el.querySelector('media\\:thumbnail, thumbnail, media\\:content');
+        const image = media?.getAttribute('url') || '';
+        return { title, url: href, ts, image };
+      });
+    }
+
+    async function load(period, category){
+      const subs = SUBREDDITS[category] || SUBREDDITS.overall;
+      const all = [];
+      for (const s of subs){
+        try{
+          const doc = await fetchRss(subredditRssUrl(s, period));
+          const items = parseRedditRss(doc);
+          all.push(...items);
+          logDiag(`Loaded r/${s} (${items.length}) via RSS`);
+        }catch(e){ logDiag(`Failed r/${s}: ${e.message}`); }
+      }
+      // De-dupe by title; prefer newer timestamp
+      const byTitle = new Map();
+      for (const p of all){
+        const t = p.title || '';
+        const cur = byTitle.get(t);
+        if(!cur || p.ts > cur.ts) byTitle.set(t, p);
+      }
+      // Sort newest first as a proxy for “top”; RSS already returns sorted by score/time
+      return Array.from(byTitle.values()).sort((a,b)=>b.ts - a.ts);
+    }
+
+    // -------- Rendering --------
+    function render(items){
+      els.grid.innerHTML = '';
+      items.forEach((p, idx) => {
+        const card = document.createElement('article');
+        card.className = 'bg-white rounded-2xl shadow-soft overflow-hidden flex flex-col';
+        const img = p.image || 'https://picsum.photos/seed/gifts/400/300';
+        const a = amazonSearchLink(p.title || 'Gift idea');
+        card.innerHTML = `
+          <div class="relative aspect-[4/3] bg-slate-100">
+            <img src="${img}" alt="${(p.title||'Gift idea').replace(/"/g,'&quot;')}" class="w-full h-full object-cover" loading="lazy" />
+            <span class="absolute top-2 left-2 text-xs px-2 py-1 rounded-lg bg-black/70 text-white">#${idx+1}</span>
+          </div>
+          <div class="p-4 flex-1 flex flex-col gap-2">
+            <div class="text-xs text-slate-500">From Reddit RSS</div>
+            <h3 class="font-semibold leading-snug line-clamp-2">${(p.title||'Gift idea').replace(/</g,'&lt;')}</h3>
+            <div class="mt-auto">
+              <a href="${a}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 text-indigo-700 hover:underline">
+                <span>View on Amazon</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M6 2a1 1 0 0 0 0 2h3.586L2.293 11.293a1 1 0 1 0 1.414 1.414L11 5.414V9a1 1 0 1 0 2 0V3a1 1 0 0 0-1-1H6z"/></svg>
+              </a>
+            </div>
+          </div>`;
+        els.grid.appendChild(card);
+      });
+      logDiag(`Rendered ${items.length} item(s).`);
+    }
+
+    // -------- Filters & State --------
     function applyFilters(posts){
       const q = els.q.value.trim().toLowerCase();
       const gender = els.gender.value;
       const ageMin = parseInt(els.ageMin.value, 10) || 0;
       const ageMax = parseInt(els.ageMax.value, 10) || 99;
 
-      let list = posts.filter(p => !p.stickied);
-
+      let list = posts;
       if(gender !== 'all') list = list.filter(p => matchesGender(p.title, gender));
       list = list.filter(p => matchesAge(p.title, ageMin, ageMax));
       if(q) list = list.filter(p => (p.title||'').toLowerCase().includes(q));
-
       return list.slice(0, 10);
     }
 
-    async function refreshData(force=false){
-      const period = els.period.value; // day|week
-      const category = els.category.value; // key
-      els.error.textContent = '';
+    let cache = { day:{}, week:{} }; // cache[period][category] = list
 
-      try {
+    async function refreshData(force=false){
+      const period = els.period.value;
+      const category = els.category.value;
+      els.error.textContent = '';
+      try{
         if(!cache[period][category] || force){
-          const posts = await load(period, category);
-          cache[period][category] = posts;
+          cache[period][category] = await load(period, category);
         }
         const filtered = applyFilters(cache[period][category]);
-        if(filtered.length === 0){
-          els.error.textContent = 'No posts matched your filters just now. Try widening the age/gender or switch category.';
-        }
         render(filtered);
-        els.meta.textContent = `Period: ${period === 'day' ? 'Today' : 'This Week'} · Category: ${category.replace('_',' ')} · Updated ${fmtDate(Date.now())}`;
-        els.title.textContent = period === 'day' ? 'Top 10 Today' : 'Top 10 This Week';
-      } catch(e){
+        els.meta.textContent = `Period: ${period==='day'?'Today':'This Week'} · Category: ${category.replace('_',' ')} · Updated ${fmtDate(Date.now())}`;
+        els.title.textContent = period==='day' ? 'Top 10 Today' : 'Top 10 This Week';
+        if(filtered.length===0){
+          els.error.textContent = 'No posts matched your filters. Try different filters or category.';
+        }
+      }catch(e){
         console.error(e);
-        els.error.textContent = 'All attempts failed. As a fallback, here are a few evergreen ideas:';
-        render([ { title: 'Insulated Tumbler' }, { title: 'LED String Lights' }, { title: 'Cozy Throw Blanket' }, { title: 'Bluetooth Beanie' } ]);
+        els.error.textContent = 'Could not load sources now. Showing sample ideas.';
+        render([
+          { title:'Cozy Sherpa Throw Blanket' },
+          { title:'Insulated Stainless Steel Tumbler 40oz' },
+          { title:'LED String Lights (USB)' },
+          { title:'Wireless Earbuds Bluetooth' },
+          { title:'Scented Candle Gift Set' },
+          { title:'Mini Projector for Movies' },
+          { title:'Massage Gun Handheld' },
+          { title:'Lego Flowers Bouquet' },
+          { title:'Ticket to Ride (Board Game)' },
+          { title:'Electric Milk Frother' },
+        ]);
       }
     }
 
-    // Auto-refresh at next local midnight
-    setTimeout(() => refreshData(true), nextLocalMidnight());
+    // Auto refresh at next local midnight
+    setTimeout(()=> refreshData(true), nextLocalMidnight());
 
-    // Restore URL params
+    // URL state
     (function restoreFromQuery(){
       const u = new URL(location.href);
-      const get = (k, d) => u.searchParams.get(k) || d;
+      const get = (k,d)=> u.searchParams.get(k) || d;
       els.period.value = get('period','day');
       els.category.value = get('category','overall');
       els.gender.value = get('gender','all');
-      els.ageMin.value = clamp(parseInt(get('ageMin','0'),10)||0, 0, 99);
-      els.ageMax.value = clamp(parseInt(get('ageMax','99'),10)||99, 0, 99);
+      els.ageMin.value = clamp(parseInt(get('ageMin','0'),10)||0,0,99);
+      els.ageMax.value = clamp(parseInt(get('ageMax','99'),10)||99,0,99);
       els.q.value = get('q','');
     })();
-
-    // Persist URL params
     function syncQuery(){
       const u = new URL(location.href);
       u.searchParams.set('period', els.period.value);
@@ -334,39 +311,32 @@
       u.searchParams.set('ageMin', els.ageMin.value);
       u.searchParams.set('ageMax', els.ageMax.value);
       if(els.q.value) u.searchParams.set('q', els.q.value); else u.searchParams.delete('q');
-      history.replaceState(null, '', u.toString());
+      history.replaceState(null,'',u.toString());
     }
 
-    // Wire events
     ['change','keyup'].forEach(evt => {
-      els.q.addEventListener(evt, () => { syncQuery(); refreshData(); });
+      els.q.addEventListener(evt, ()=>{ syncQuery(); refreshData(); });
     });
-    [els.period, els.category, els.gender, els.ageMin, els.ageMax].forEach(el => {
-      el.addEventListener('change', () => { syncQuery(); refreshData(); });
-      el.addEventListener('keyup', () => { syncQuery(); refreshData(); });
+    [els.period,els.category,els.gender,els.ageMin,els.ageMax].forEach(el=>{
+      el.addEventListener('change', ()=>{ syncQuery(); refreshData(); });
+      el.addEventListener('keyup',  ()=>{ syncQuery(); refreshData(); });
     });
-    els.refresh.addEventListener('click', () => refreshData(true));
-    els.sample.addEventListener('click', () => {
-      const demo = [
-        { title: 'Cozy Sherpa Throw Blanket', score: 421 },
-        { title: 'Insulated Stainless Steel Tumbler 40oz', score: 382 },
-        { title: 'LED String Lights (USB)', score: 271 },
-        { title: 'Wireless Earbuds Bluetooth 5.3', score: 215 },
-        { title: 'Scented Candle Gift Set', score: 188 },
-        { title: 'Mini Projector for Movies', score: 172 },
-        { title: 'Massage Gun Handheld', score: 166 },
-        { title: 'Lego Flowers Bouquet', score: 141 },
-        { title: 'Board Game – Ticket to Ride', score: 119 },
-        { title: 'Electric Milk Frother', score: 101 }
-      ];
-      render(demo);
+    els.refresh.addEventListener('click', ()=> refreshData(true));
+    els.sample.addEventListener('click', ()=>{
+      render([
+        { title:'Cozy Sherpa Throw Blanket' },
+        { title:'Insulated Stainless Steel Tumbler 40oz' },
+        { title:'LED String Lights (USB)' },
+        { title:'Wireless Earbuds Bluetooth' },
+        { title:'Scented Candle Gift Set' },
+        { title:'Mini Projector for Movies' },
+        { title:'Massage Gun Handheld' },
+        { title:'Lego Flowers Bouquet' },
+        { title:'Ticket to Ride (Board Game)' },
+        { title:'Electric Milk Frother' },
+      ]);
       els.error.textContent = '';
       els.meta.textContent = 'Sample data loaded (offline mode)';
-    });
-    els.toggleProxy.addEventListener('click', () => {
-      USE_PROXY_ALWAYS = !USE_PROXY_ALWAYS;
-      els.toggleProxy.textContent = `Toggle proxy (${USE_PROXY_ALWAYS ? 'on' : 'off'})`;
-      refreshData(true);
     });
 
     // Initial load
