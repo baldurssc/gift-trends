@@ -4,10 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Popular Gifts — Daily & Weekly Top 10</title>
-  <meta name="description" content="Auto‑updated popular gift ideas with filters for age, gender, and category. Pulls from public online sources once per day." />
-
-  <!-- Tailwind (CDN is fine for a prototype; for production, install locally) -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <meta name="description" content="Auto‑updated popular gift ideas with filters for age, gender, and category. Pulls from public online sources once per day." />  <!-- Tailwind (production build) -->
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Build instructions:
+    1) npm i -D tailwindcss postcss autoprefixer
+    2) npx tailwindcss init -p
+    3) tailwind.config.js -> module.exports = { content: ['./index.html'], theme: { extend: {} }, plugins: [] }
+    4) Create input.css with:
+       @tailwind base;
+@tailwind components;
+@tailwind utilities;
+    5) Build once (or in watch):
+       npx tailwindcss -i ./input.css -o ./styles.css --minify
+    6) Deploy index.html + styles.css to your static host.
+  -->
   <style>
     /* Fallback fonts & small polish */
     html { scroll-behavior: smooth; }
