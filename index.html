@@ -61,7 +61,7 @@
         </div>
         <div class="flex gap-3">
           <input id="q" placeholder="Search titles…" class="border rounded-lg px-3 py-2 w-56" />
-          <button id="refresh" class="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800">Refresh now</button>
+          <button id="refresh" type="button" class="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 cursor-pointer select-none">Refresh now</button>
         </div>
       </div>
       <div class="text-xs text-slate-500 mt-3" id="meta"></div>
@@ -85,6 +85,8 @@
   </main>
 
   <script>
+  // Ensure code runs after DOM is ready even if script is moved
+  document.addEventListener('DOMContentLoaded', () => {
     // ---------------------------
     // Config
     // ---------------------------
@@ -485,6 +487,7 @@
 
     // Initial load
     refreshData(true);
+  });
   </script>
 </body>
 </html>
